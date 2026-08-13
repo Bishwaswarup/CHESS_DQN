@@ -2,6 +2,28 @@
 
 A resizable Pygame chess app with local two-player and Stockfish modes, plus a DQN training experiment.
 
+## Project layout
+
+```text
+chess-dqn/
+├── assets/                 # Piece images and move sound used by game.py
+├── src/
+│   ├── __init__.py
+│   ├── model.py            # Existing DQN model
+│   ├── chess_utils.py      # Existing board/tensor helpers
+│   ├── memory.py           # Existing replay buffer
+│   ├── environment.py
+│   ├── agent.py
+│   └── utils.py
+├── notebooks/
+│   └── colab_training.ipynb
+├── game.py
+├── train.py
+├── requirements.txt
+├── .gitignore
+└── README.md
+```
+
 ## Run the game
 
 ```bash

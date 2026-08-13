@@ -1,7 +1,6 @@
 """Train the DQN against Stockfish and record resumable, inspectable runs."""
 
 import argparse
-import random
 from pathlib import Path
 
 import chess
@@ -11,9 +10,11 @@ import torch.nn as nn
 import torch.optim as optim
 from torch.utils.tensorboard import SummaryWriter
 
-from chess_utils import action_index_to_move, board_to_tensor, calculate_reward, device, get_legal_action_mask
-from memory import ReplayBuffer
-from model import ChessDQN
+from src.agent import select_action
+from src.chess_utils import board_to_tensor, calculate_reward, device, get_legal_action_mask
+from src.memory import ReplayBuffer
+from src.model import ChessDQN
+from src.utils import load_checkpoint, outcome_name, save_checkpoint
 
 
 def train_step(model, optimizer, loss_fn, memory, batch_size=32, gamma=0.99):
@@ -43,30 +44,6 @@ def train_step(model, optimizer, loss_fn, memory, batch_size=32, gamma=0.99):
     return loss.item()
 
 
-def save_checkpoint(path, model, optimizer, episode, epsilon):
-    path.parent.mkdir(parents=True, exist_ok=True)
-    torch.save({
-        "episode": episode,
-        "epsilon": epsilon,
-        "model_state_dict": model.state_dict(),
-        "optimizer_state_dict": optimizer.state_dict(),
-    }, path)
-
-
-def load_checkpoint(path, model, optimizer):
-    checkpoint = torch.load(path, map_location=device, weights_only=False)
-    model.load_state_dict(checkpoint["model_state_dict"])
-    optimizer.load_state_dict(checkpoint["optimizer_state_dict"])
-    return checkpoint.get("episode", 0), checkpoint.get("epsilon", 0.5)
-
-
-def outcome_name(board):
-    outcome = board.outcome(claim_draw=True)
-    if outcome is None or outcome.winner is None:
-        return "draw"
-    return "win" if outcome.winner == chess.WHITE else "loss"
-
-
 def run_training_loop(args):
     model = ChessDQN().to(device)
     optimizer = optim.Adam(model.parameters(), lr=args.learning_rate)
@@ -91,17 +68,7 @@ def run_training_loop(args):
                 while not board.is_game_over(claim_draw=True):
                     state = board_to_tensor(board)
                     mask = get_legal_action_mask(board)
-                    if random.random() < epsilon:
-                        move = random.choice(list(board.legal_moves))
-                        action = move.from_square * 64 + move.to_square
-                    else:
-                        with torch.no_grad():
-                            action = model(state, mask=mask).argmax().item()
-                        move = action_index_to_move(board, action)
-                        # Defensive fallback for unexpected promotion ambiguity.
-                        if move not in board.legal_moves:
-                            move = random.choice(list(board.legal_moves))
-                            action = move.from_square * 64 + move.to_square
+                    move, action = select_action(model, board, state, mask, epsilon)
 
                     reward = calculate_reward(board, move)
                     board.push(move)
