@@ -3,12 +3,13 @@ import random
 
 
 class ReplayBuffer:
-    def __init__(self, capacity=50000, prioritized=True, alpha=0.6):
+    def __init__(self, capacity=50000, prioritized=True, alpha=0.6, max_priority=10.0):
         # A deque automatically pushes old memories out when it reaches capacity
         self.buffer = deque(maxlen=capacity)
         self.priorities = deque(maxlen=capacity)
         self.prioritized = prioritized
         self.alpha = alpha
+        self.max_priority = max_priority
 
     def push(self, state, action_idx, reward, next_state, done, mask):
         """Save experience in CPU RAM; keep VRAM available for batched training."""
@@ -16,7 +17,7 @@ class ReplayBuffer:
             state.detach().cpu(), action_idx, reward,
             next_state.detach().cpu(), done, mask.detach().cpu(),
         ))
-        self.priorities.append(max(self.priorities, default=1.0))
+        self.priorities.append(min(max(self.priorities, default=1.0), self.max_priority))
 
     def sample(self, batch_size, beta=0.4):
         """Sample high-TD-error experiences more often, with bias correction."""
@@ -33,7 +34,7 @@ class ReplayBuffer:
 
     def update_priorities(self, indices, priorities):
         for index, priority in zip(indices, priorities):
-            self.priorities[index] = max(float(priority), 1e-5)
+            self.priorities[index] = min(max(float(priority), 1e-5), self.max_priority)
 
     def __len__(self):
         return len(self.buffer)

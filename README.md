@@ -62,7 +62,7 @@ python train.py --episodes 5000 --stockfish=1 --stockfish-depth=1 \
   --resume checkpoints-random/latest.pt --checkpoint-dir checkpoints-stockfish
 ```
 
-The default training settings batch `256` experiences every `4` game moves for efficient T4 GPU use. The replay buffer deliberately lives in system RAM; its job is to store many past games, while GPU memory is reserved for model batches.
+The default training settings batch `256` experiences every `4` game moves for efficient T4 GPU use. The replay buffer deliberately lives in system RAM; its job is to store many past games, while GPU memory is reserved for model batches. Priorities and Q-targets are capped to prevent a few outlier games from destabilising training.
 
 ## Google Colab
 

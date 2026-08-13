@@ -19,7 +19,8 @@ from src.model import ChessDQN
 from src.utils import load_checkpoint, outcome_name, save_checkpoint
 
 
-def train_step(model, target_model, optimizer, loss_fn, memory, batch_size=32, gamma=0.99, beta=0.4):
+def train_step(model, target_model, optimizer, loss_fn, memory, batch_size=32, gamma=0.99,
+               beta=0.4, q_value_clip=10.0):
     """Sample replay memory and perform one DQN update."""
     if len(memory) < batch_size:
         return 0.0
@@ -35,12 +36,12 @@ def train_step(model, target_model, optimizer, loss_fn, memory, batch_size=32, g
     next_masks = torch.cat(masks).to(device, non_blocking=True)
     importance_weights = torch.tensor(importance_weights, dtype=torch.float32, device=device)
 
-    current_q_values = model(states).gather(1, actions).squeeze(1)
+    current_q_values = model(states).gather(1, actions).squeeze(1).clamp(-q_value_clip, q_value_clip)
     with torch.no_grad():
         # Double DQN: online model selects a legal action; target model values it.
         next_actions = model(next_states, mask=next_masks).argmax(dim=1, keepdim=True)
         max_next_q = target_model(next_states).gather(1, next_actions).squeeze(1)
-        target_q_values = rewards + gamma * max_next_q * (1 - dones)
+        target_q_values = (rewards + gamma * max_next_q * (1 - dones)).clamp(-q_value_clip, q_value_clip)
 
     td_errors = target_q_values - current_q_values
     loss = (importance_weights * loss_fn(current_q_values, target_q_values)).mean()
@@ -66,7 +67,7 @@ def evaluate(model, engine, args):
                 board.push(move)
                 ai_moves += 1
                 if not board.is_game_over(claim_draw=True):
-                    board.push(engine.play(board, chess.engine.Limit(depth=args.stockfish_depth)).move)
+                    board.push(opponent_move(board, engine, args))
             results[outcome_name(board)] += 1
             moves_survived.append(ai_moves)
     finally:
@@ -90,7 +91,7 @@ def run_training_loop(args):
     optimizer = optim.Adam(model.parameters(), lr=args.learning_rate)
     loss_fn = nn.SmoothL1Loss(reduction="none")
     memory = ReplayBuffer(capacity=args.memory_size, prioritized=args.prioritized_replay,
-                          alpha=args.priority_alpha)
+                          alpha=args.priority_alpha, max_priority=args.max_priority)
     start_episode, epsilon = 0, args.epsilon
     checkpoint_path = Path(args.checkpoint_dir) / "latest.pt"
     if args.resume:
@@ -140,7 +141,7 @@ def run_training_loop(args):
                         progress = min(1.0, environment_steps / args.priority_beta_steps)
                         beta = args.priority_beta_start + (1.0 - args.priority_beta_start) * progress
                         loss = train_step(model, target_model, optimizer, loss_fn, memory,
-                                          args.batch_size, args.gamma, beta)
+                                          args.batch_size, args.gamma, beta, args.q_value_clip)
                         total_loss += loss
                         updates += loss > 0
 
@@ -162,7 +163,7 @@ def run_training_loop(args):
                 if episode % args.target_update_every == 0:
                     target_model.load_state_dict(model.state_dict())
 
-                if args.opponent == "stockfish" and episode % args.evaluate_every == 0:
+                if episode % args.evaluate_every == 0:
                     evaluation, average_moves = evaluate(model, engine, args)
                     evaluation_games = sum(evaluation.values())
                     writer.add_scalar("evaluation/win_rate", evaluation["win"] / evaluation_games, episode)
@@ -199,12 +200,16 @@ def parse_args():
     parser.add_argument("--priority-alpha", type=float, default=0.6)
     parser.add_argument("--priority-beta-start", type=float, default=0.4)
     parser.add_argument("--priority-beta-steps", type=int, default=100_000)
+    parser.add_argument("--max-priority", type=float, default=10.0,
+                        help="Cap replay priority so one bad transition cannot dominate training.")
     parser.add_argument("--batch-size", type=int, default=256,
                         help="Experiences per GPU update; 256 is a good T4 starting point.")
     parser.add_argument("--train-every", type=int, default=4,
                         help="Run one batched optimizer update after this many game moves.")
     parser.add_argument("--learning-rate", type=float, default=1e-4)
     parser.add_argument("--gamma", type=float, default=0.99)
+    parser.add_argument("--q-value-clip", type=float, default=10.0,
+                        help="Bound online and target Q-values to prevent value divergence.")
     parser.add_argument("--epsilon", type=float, default=0.5)
     parser.add_argument("--epsilon-decay", type=float, default=0.995)
     parser.add_argument("--epsilon-min", type=float, default=0.05)
