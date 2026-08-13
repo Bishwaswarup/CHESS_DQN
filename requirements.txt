@@ -1,0 +1,5 @@
+chess
+numpy
+torch
+pygame
+tensorboard
