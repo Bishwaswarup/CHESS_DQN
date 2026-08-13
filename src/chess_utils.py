@@ -1,8 +1,16 @@
 import chess
 import torch
 
-# Prefer Apple Silicon acceleration when it is available, otherwise use CPU.
-device = torch.device("mps" if torch.backends.mps.is_available() else "cpu")
+def select_device():
+    """Use the fastest available PyTorch backend: CUDA, then Apple MPS, then CPU."""
+    if torch.cuda.is_available():
+        return torch.device("cuda")
+    if torch.backends.mps.is_available():
+        return torch.device("mps")
+    return torch.device("cpu")
+
+
+device = select_device()
 
 # Convert the chess into a 3d shape of
 # 12 channels (each piece has a channel that is pawn,knight,bishop,rook,queen,king so 6 pieces and 2 colors)
@@ -71,4 +79,3 @@ def calculate_reward(board: chess.Board, move: chess.Move) -> float:
         reward += 5.0
     board.pop()
     return reward
-
