@@ -19,12 +19,13 @@ from src.model import ChessDQN
 from src.utils import load_checkpoint, outcome_name, save_checkpoint
 
 
-def train_step(model, target_model, optimizer, loss_fn, memory, batch_size=32, gamma=0.99):
+def train_step(model, target_model, optimizer, loss_fn, memory, batch_size=32, gamma=0.99, beta=0.4):
     """Sample replay memory and perform one DQN update."""
     if len(memory) < batch_size:
         return 0.0
 
-    states, actions, rewards, next_states, dones, masks = zip(*memory.sample(batch_size))
+    batch, indices, importance_weights = memory.sample(batch_size, beta)
+    states, actions, rewards, next_states, dones, masks = zip(*batch)
     states = torch.cat(states).to(device, non_blocking=True)
     next_states = torch.cat(next_states).to(device, non_blocking=True)
     # Keeping targets bounded prevents a single checkmate from destabilising Q-values.
@@ -32,18 +33,22 @@ def train_step(model, target_model, optimizer, loss_fn, memory, batch_size=32, g
     actions = torch.tensor(actions, dtype=torch.int64, device=device).unsqueeze(1)
     dones = torch.tensor(dones, dtype=torch.float32, device=device)
     next_masks = torch.cat(masks).to(device, non_blocking=True)
+    importance_weights = torch.tensor(importance_weights, dtype=torch.float32, device=device)
 
     current_q_values = model(states).gather(1, actions).squeeze(1)
     with torch.no_grad():
-        next_q_values = target_model(next_states, mask=next_masks)
-        max_next_q = next_q_values.max(1).values
+        # Double DQN: online model selects a legal action; target model values it.
+        next_actions = model(next_states, mask=next_masks).argmax(dim=1, keepdim=True)
+        max_next_q = target_model(next_states).gather(1, next_actions).squeeze(1)
         target_q_values = rewards + gamma * max_next_q * (1 - dones)
 
-    loss = loss_fn(current_q_values, target_q_values)
+    td_errors = target_q_values - current_q_values
+    loss = (importance_weights * loss_fn(current_q_values, target_q_values)).mean()
     optimizer.zero_grad()
     loss.backward()
     torch.nn.utils.clip_grad_norm_(model.parameters(), 1.0)
     optimizer.step()
+    memory.update_priorities(indices, td_errors.detach().abs().cpu().tolist())
     return loss.item()
 
 
@@ -83,8 +88,9 @@ def run_training_loop(args):
     target_model.load_state_dict(model.state_dict())
     target_model.eval()
     optimizer = optim.Adam(model.parameters(), lr=args.learning_rate)
-    loss_fn = nn.SmoothL1Loss()
-    memory = ReplayBuffer(capacity=args.memory_size)
+    loss_fn = nn.SmoothL1Loss(reduction="none")
+    memory = ReplayBuffer(capacity=args.memory_size, prioritized=args.prioritized_replay,
+                          alpha=args.priority_alpha)
     start_episode, epsilon = 0, args.epsilon
     checkpoint_path = Path(args.checkpoint_dir) / "latest.pt"
     if args.resume:
@@ -131,8 +137,10 @@ def run_training_loop(args):
                     episode_reward += reward
                     environment_steps += 1
                     if environment_steps % args.train_every == 0:
+                        progress = min(1.0, environment_steps / args.priority_beta_steps)
+                        beta = args.priority_beta_start + (1.0 - args.priority_beta_start) * progress
                         loss = train_step(model, target_model, optimizer, loss_fn, memory,
-                                          args.batch_size, args.gamma)
+                                          args.batch_size, args.gamma, beta)
                         total_loss += loss
                         updates += loss > 0
 
@@ -186,6 +194,11 @@ def parse_args():
     parser.add_argument("--resume", help="Checkpoint path to resume from.")
     parser.add_argument("--save-every", type=int, default=25)
     parser.add_argument("--memory-size", type=int, default=50_000)
+    parser.add_argument("--prioritized-replay", action=argparse.BooleanOptionalAction, default=True,
+                        help="Prioritize transitions with high TD error (enabled by default).")
+    parser.add_argument("--priority-alpha", type=float, default=0.6)
+    parser.add_argument("--priority-beta-start", type=float, default=0.4)
+    parser.add_argument("--priority-beta-steps", type=int, default=100_000)
     parser.add_argument("--batch-size", type=int, default=256,
                         help="Experiences per GPU update; 256 is a good T4 starting point.")
     parser.add_argument("--train-every", type=int, default=4,

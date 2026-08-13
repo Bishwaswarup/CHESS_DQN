@@ -12,12 +12,13 @@ def select_device():
 
 device = select_device()
 
-# Convert the chess into a 3d shape of
-# 12 channels (each piece has a channel that is pawn,knight,bishop,rook,queen,king so 6 pieces and 2 colors)
-# 8 rows and 8 columns
+# The board has 18 planes: 12 pieces, side-to-move, four castling rights,
+# and one en-passant target.  These state planes are essential because the
+# same piece layout can have different legal moves.
+STATE_CHANNELS = 18
 
 def board_to_tensor(board: chess.Board) -> torch.Tensor:
-    tensor = torch.zeros((12, 8, 8),  dtype=torch.float32, device = device)
+    tensor = torch.zeros((STATE_CHANNELS, 8, 8), dtype=torch.float32, device=device)
 
     piece_idx = {
         chess.PAWN: 0, chess.KNIGHT: 1, chess.BISHOP: 2,
@@ -29,6 +30,16 @@ def board_to_tensor(board: chess.Board) -> torch.Tensor:
         column = square%8
         channel = piece_idx[piece.piece_type] + (0 if piece.color == chess.WHITE else 6)
         tensor[channel, row, column] = 1.0
+
+    tensor[12].fill_(float(board.turn == chess.WHITE))
+    tensor[13].fill_(float(board.has_kingside_castling_rights(chess.WHITE)))
+    tensor[14].fill_(float(board.has_queenside_castling_rights(chess.WHITE)))
+    tensor[15].fill_(float(board.has_kingside_castling_rights(chess.BLACK)))
+    tensor[16].fill_(float(board.has_queenside_castling_rights(chess.BLACK)))
+    if board.ep_square is not None:
+        row = 7 - (board.ep_square // 8)
+        column = board.ep_square % 8
+        tensor[17, row, column] = 1.0
 
     return tensor.unsqueeze(0)
 

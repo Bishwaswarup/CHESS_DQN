@@ -50,7 +50,9 @@ python train.py --resume checkpoints/latest.pt
 
 TensorBoard reports episode reward, average loss, epsilon, moves survived, and win/draw/loss rates.
 
-`--stockfish` sets Stockfish's skill from `0` (weakest) to `20` (strongest). Start a new DQN at `--stockfish=1 --stockfish-depth=1`; raise these gradually after its greedy evaluation results improve. The trainer uses reward clipping, material-balance rewards after both sides move, and a target network to keep Q-values stable.
+`--stockfish` sets Stockfish's skill from `0` (weakest) to `20` (strongest). Start a new DQN at `--stockfish=1 --stockfish-depth=1`; raise these gradually after its greedy evaluation results improve. The trainer uses material-balance rewards after both sides move, Double DQN, dueling value/advantage heads, and prioritized replay to focus on costly mistakes.
+
+The current board encoder uses 18 planes: the 12 piece planes, side to move, four castling-rights planes, and an en-passant plane. Because this changes the model input shape, start a **fresh training run** after this update; old checkpoints cannot be loaded.
 
 For a learning curriculum, first train basic tactical play against random legal moves, then continue that checkpoint against Stockfish:
 

@@ -7,8 +7,8 @@ class ChessDQN(nn.Module):
     def __init__(self):
         super().__init__()
 
-        # Input shape: (Batch, 12, 8, 8)
-        self.conv1 = nn.Conv2d(12, 64, kernel_size=3, padding=1)
+        # Input shape: (Batch, 18, 8, 8)
+        self.conv1 = nn.Conv2d(18, 64, kernel_size=3, padding=1)
         self.bn1 = nn.BatchNorm2d(64)
 
         self.conv2 = nn.Conv2d(64, 128, kernel_size=3, padding=1)
@@ -18,7 +18,10 @@ class ChessDQN(nn.Module):
         self.bn3 = nn.BatchNorm2d(128)
 
         self.fc1 = nn.Linear(128 * 8 * 8, 512)
-        self.fc2 = nn.Linear(512, 4096)
+        # Dueling heads separate state value from move advantage, which is
+        # useful when many legal moves lead to similar positions.
+        self.value = nn.Linear(512, 1)
+        self.advantage = nn.Linear(512, 4096)
 
     def forward(self, x, mask=None):
         # Pass data through Conv -> BatchNorm -> ReLU
@@ -28,7 +31,7 @@ class ChessDQN(nn.Module):
 
         x = x.view(x.size(0), -1)
         x = F.relu(self.fc1(x))
-        q_values = self.fc2(x)
+        q_values = self.value(x) + self.advantage(x) - self.advantage(x).mean(dim=1, keepdim=True)
 
         # Mask out illegal moves
         if mask is not None:
