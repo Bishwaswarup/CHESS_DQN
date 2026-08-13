@@ -8,8 +8,11 @@ class ReplayBuffer:
         self.buffer = deque(maxlen=capacity)
 
     def push(self, state, action_idx, reward, next_state, done, mask):
-        """Saves a single turn's experience into memory."""
-        self.buffer.append((state, action_idx, reward, next_state, done, mask))
+        """Save experience in CPU RAM; keep VRAM available for batched training."""
+        self.buffer.append((
+            state.detach().cpu(), action_idx, reward,
+            next_state.detach().cpu(), done, mask.detach().cpu(),
+        ))
 
     def sample(self, batch_size):
         """Randomly samples a batch of experiences for training."""

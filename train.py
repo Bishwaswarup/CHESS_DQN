@@ -25,13 +25,13 @@ def train_step(model, target_model, optimizer, loss_fn, memory, batch_size=32, g
         return 0.0
 
     states, actions, rewards, next_states, dones, masks = zip(*memory.sample(batch_size))
-    states = torch.cat(states)
-    next_states = torch.cat(next_states)
+    states = torch.cat(states).to(device, non_blocking=True)
+    next_states = torch.cat(next_states).to(device, non_blocking=True)
     # Keeping targets bounded prevents a single checkmate from destabilising Q-values.
     rewards = torch.tensor(rewards, dtype=torch.float32, device=device).clamp(-1.0, 1.0)
     actions = torch.tensor(actions, dtype=torch.int64, device=device).unsqueeze(1)
     dones = torch.tensor(dones, dtype=torch.float32, device=device)
-    next_masks = torch.cat(masks)
+    next_masks = torch.cat(masks).to(device, non_blocking=True)
 
     current_q_values = model(states).gather(1, actions).squeeze(1)
     with torch.no_grad():
@@ -94,6 +94,7 @@ def run_training_loop(args):
 
     writer = SummaryWriter(args.log_dir)
     outcomes = {"win": 0, "draw": 0, "loss": 0}
+    environment_steps = 0
     try:
         engine_context = (
             chess.engine.SimpleEngine.popen_uci(args.stockfish_path)
@@ -128,9 +129,12 @@ def run_training_loop(args):
                     next_mask = get_legal_action_mask(board)
                     memory.push(state, action, reward, next_state, done, next_mask)
                     episode_reward += reward
-                    loss = train_step(model, target_model, optimizer, loss_fn, memory, args.batch_size, args.gamma)
-                    total_loss += loss
-                    updates += loss > 0
+                    environment_steps += 1
+                    if environment_steps % args.train_every == 0:
+                        loss = train_step(model, target_model, optimizer, loss_fn, memory,
+                                          args.batch_size, args.gamma)
+                        total_loss += loss
+                        updates += loss > 0
 
                 result = outcome_name(board)
                 outcomes[result] += 1
@@ -182,7 +186,10 @@ def parse_args():
     parser.add_argument("--resume", help="Checkpoint path to resume from.")
     parser.add_argument("--save-every", type=int, default=25)
     parser.add_argument("--memory-size", type=int, default=50_000)
-    parser.add_argument("--batch-size", type=int, default=64)
+    parser.add_argument("--batch-size", type=int, default=256,
+                        help="Experiences per GPU update; 256 is a good T4 starting point.")
+    parser.add_argument("--train-every", type=int, default=4,
+                        help="Run one batched optimizer update after this many game moves.")
     parser.add_argument("--learning-rate", type=float, default=1e-4)
     parser.add_argument("--gamma", type=float, default=0.99)
     parser.add_argument("--epsilon", type=float, default=0.5)
