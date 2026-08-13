@@ -50,7 +50,15 @@ python train.py --resume checkpoints/latest.pt
 
 TensorBoard reports episode reward, average loss, epsilon, moves survived, and win/draw/loss rates.
 
-`--stockfish` sets Stockfish's skill from `0` (weakest) to `20` (strongest). Start a new DQN at `--stockfish=1 --stockfish-depth=1`; raise these gradually after its greedy evaluation results improve. The trainer uses reward clipping and a target network to keep Q-values stable.
+`--stockfish` sets Stockfish's skill from `0` (weakest) to `20` (strongest). Start a new DQN at `--stockfish=1 --stockfish-depth=1`; raise these gradually after its greedy evaluation results improve. The trainer uses reward clipping, material-balance rewards after both sides move, and a target network to keep Q-values stable.
+
+For a learning curriculum, first train basic tactical play against random legal moves, then continue that checkpoint against Stockfish:
+
+```bash
+python train.py --episodes 3000 --opponent random --checkpoint-dir checkpoints-random
+python train.py --episodes 5000 --stockfish=1 --stockfish-depth=1 \
+  --resume checkpoints-random/latest.pt --checkpoint-dir checkpoints-stockfish
+```
 
 ## Google Colab
 
@@ -61,7 +69,9 @@ In Colab, select **Runtime → Change runtime type → T4 GPU**, then run:
 %cd CHESS_DQN
 !pip install -r requirements.txt
 !sudo apt-get update -qq && sudo apt-get install -y stockfish
-!python train.py --episodes 1000 --stockfish=1 --stockfish-depth=1 --stockfish-path /usr/games/stockfish
+!python train.py --episodes 3000 --opponent random --checkpoint-dir checkpoints-random
+# Then fine-tune the saved model against weak Stockfish:
+!python train.py --episodes 5000 --stockfish=1 --stockfish-depth=1 --stockfish-path /usr/games/stockfish --resume checkpoints-random/latest.pt --checkpoint-dir checkpoints-stockfish
 ```
 
 The code automatically selects CUDA in Colab, MPS on supported Macs, and CPU elsewhere. To continue a prior Colab session, store `checkpoints/` in Google Drive, then pass its `latest.pt` file to `--resume`.

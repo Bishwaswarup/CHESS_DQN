@@ -1,6 +1,7 @@
 """Train the DQN against Stockfish and record resumable, inspectable runs."""
 
 import argparse
+import random
 from pathlib import Path
 
 import chess
@@ -11,7 +12,7 @@ import torch.optim as optim
 from torch.utils.tensorboard import SummaryWriter
 
 from src.agent import select_action
-from src.chess_utils import board_to_tensor, calculate_reward, device, get_legal_action_mask
+from src.chess_utils import board_to_tensor, calculate_transition_reward, device, get_legal_action_mask
 from src.memory import ReplayBuffer
 from src.model import ChessDQN
 from src.utils import load_checkpoint, outcome_name, save_checkpoint
@@ -67,6 +68,13 @@ def evaluate(model, engine, args):
     return results, sum(moves_survived) / len(moves_survived)
 
 
+def opponent_move(board, engine, args):
+    """Select a reply from either a learning-friendly random opponent or Stockfish."""
+    if args.opponent == "random":
+        return random.choice(list(board.legal_moves))
+    return engine.play(board, chess.engine.Limit(depth=args.stockfish_depth)).move
+
+
 def run_training_loop(args):
     print(f"Training on {device}.")
     model = ChessDQN().to(device)
@@ -89,30 +97,27 @@ def run_training_loop(args):
     try:
         with chess.engine.SimpleEngine.popen_uci(stockfish_path) as engine:
             engine.configure({"Skill Level": args.stockfish_skill})
-            print(f"Training against Stockfish skill {args.stockfish_skill}/20 at depth {args.stockfish_depth}.")
+            opponent_label = "random legal moves" if args.opponent == "random" else (
+                f"Stockfish skill {args.stockfish_skill}/20 at depth {args.stockfish_depth}")
+            print(f"Training against {opponent_label}.")
             for episode in range(start_episode + 1, args.episodes + 1):
                 board = chess.Board()
                 episode_reward, total_loss, updates, ai_moves = 0.0, 0.0, 0, 0
 
                 while not board.is_game_over(claim_draw=True):
+                    board_before_turn = board.copy(stack=False)
                     state = board_to_tensor(board)
                     mask = get_legal_action_mask(board)
                     move, action = select_action(model, board, state, mask, epsilon)
 
-                    reward = calculate_reward(board, move)
                     board.push(move)
                     ai_moves += 1
                     if not board.is_game_over(claim_draw=True):
-                        reply = engine.play(board, chess.engine.Limit(depth=args.stockfish_depth)).move
+                        reply = opponent_move(board, engine, args)
                         board.push(reply)
 
                     done = board.is_game_over(claim_draw=True)
-                    if done:
-                        result = outcome_name(board)
-                        if result == "loss":
-                            reward -= 100.0
-                        elif result == "draw":
-                            reward += 5.0
+                    reward = calculate_transition_reward(board_before_turn, board)
                     next_state = board_to_tensor(board)
                     next_mask = get_legal_action_mask(board)
                     memory.push(state, action, reward, next_state, done, next_mask)
@@ -139,7 +144,7 @@ def run_training_loop(args):
                 if episode % args.target_update_every == 0:
                     target_model.load_state_dict(model.state_dict())
 
-                if episode % args.evaluate_every == 0:
+                if args.opponent == "stockfish" and episode % args.evaluate_every == 0:
                     evaluation, average_moves = evaluate(model, engine, args)
                     evaluation_games = sum(evaluation.values())
                     writer.add_scalar("evaluation/win_rate", evaluation["win"] / evaluation_games, episode)
@@ -164,6 +169,8 @@ def parse_args():
                         help="Stockfish search depth; start at 1 while the agent is learning.")
     parser.add_argument("--stockfish", "--stockfish-skill", dest="stockfish_skill", type=int, default=1,
                         choices=range(21), help="Stockfish strength from 0 (weakest) to 20 (strongest).")
+    parser.add_argument("--opponent", choices=("stockfish", "random"), default="stockfish",
+                        help="Use random first to teach basic play, then Stockfish to improve it.")
     parser.add_argument("--checkpoint-dir", default="checkpoints")
     parser.add_argument("--log-dir", default="runs/chess-dqn")
     parser.add_argument("--resume", help="Checkpoint path to resume from.")

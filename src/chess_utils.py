@@ -64,18 +64,28 @@ PIECE_VALUES = {
 }
 
 
-def calculate_reward(board: chess.Board, move: chess.Move) -> float:
-    """Reward legal material gains and strongly reward decisive outcomes for White."""
-    reward = 0.0
-    if board.is_capture(move):
-        captured = board.piece_at(move.to_square)
-        # En passant captures a pawn outside the destination square.
-        reward += PIECE_VALUES.get(captured.piece_type if captured else chess.PAWN, 1.0)
+def material_score(board: chess.Board) -> float:
+    """Material balance from White's perspective (positive means White is ahead)."""
+    score = 0.0
+    for piece in board.piece_map().values():
+        value = PIECE_VALUES.get(piece.piece_type, 0.0)
+        score += value if piece.color == chess.WHITE else -value
+    return score
 
-    board.push(move)
-    if board.is_checkmate():
-        reward += 100.0 if board.outcome().winner == chess.WHITE else -100.0
-    elif board.is_stalemate() or board.is_insufficient_material() or board.can_claim_draw():
-        reward += 5.0
-    board.pop()
-    return reward
+
+def calculate_transition_reward(before: chess.Board, after: chess.Board) -> float:
+    """Reward net material after both sides have moved, then score the final result.
+
+    Comparing full turns teaches the agent that a tempting capture is bad when
+    Stockfish can immediately recapture a more valuable piece.
+    """
+    reward = (material_score(after) - material_score(before)) * 0.2
+    outcome = after.outcome(claim_draw=True)
+    if outcome is not None:
+        if outcome.winner == chess.WHITE:
+            reward += 1.0
+        elif outcome.winner == chess.BLACK:
+            reward -= 1.0
+        else:
+            reward += 0.5
+    return max(-1.0, min(1.0, reward))
