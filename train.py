@@ -2,6 +2,7 @@
 
 import argparse
 import random
+from contextlib import nullcontext
 from pathlib import Path
 
 import chess
@@ -93,10 +94,15 @@ def run_training_loop(args):
 
     writer = SummaryWriter(args.log_dir)
     outcomes = {"win": 0, "draw": 0, "loss": 0}
-    stockfish_path = args.stockfish_path
     try:
-        with chess.engine.SimpleEngine.popen_uci(stockfish_path) as engine:
-            engine.configure({"Skill Level": args.stockfish_skill})
+        engine_context = (
+            chess.engine.SimpleEngine.popen_uci(args.stockfish_path)
+            if args.opponent == "stockfish"
+            else nullcontext(None)
+        )
+        with engine_context as engine:
+            if engine is not None:
+                engine.configure({"Skill Level": args.stockfish_skill})
             opponent_label = "random legal moves" if args.opponent == "random" else (
                 f"Stockfish skill {args.stockfish_skill}/20 at depth {args.stockfish_depth}")
             print(f"Training against {opponent_label}.")
