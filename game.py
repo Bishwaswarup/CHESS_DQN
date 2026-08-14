@@ -27,6 +27,9 @@ import pygame
 import chess
 import chess.engine
 
+from src.engine import SearchEngine
+from src.nnue import NNUEEvaluator
+
 # ----------------------------------------------------------------------------
 # Config / Palette (soft pastel retro look)
 # ----------------------------------------------------------------------------
@@ -59,6 +62,8 @@ FPS = 60
 STOCKFISH_DEPTH = 8
 STOCKFISH_SKILL_LEVEL = 10  # Range: 0 (weakest) to 20 (strongest).
 STOCKFISH_MOVE_DELAY_MS = 750  # Pause after the engine has chosen a move.
+SEARCH_DEPTH = 4
+NNUE_CHECKPOINT = os.environ.get("NNUE_CHECKPOINT")  # Optional TinyNNUE checkpoint.
 
 ASSET_DIR = Path(__file__).resolve().parent / "assets"
 PIECE_NAMES = {"P": "Pawn", "R": "Rook", "N": "Knight", "B": "Bishop", "Q": "Queen", "K": "King"}
@@ -564,7 +569,8 @@ def draw_board(surface, game, font, font_small, font_big, piece_images, mode, en
     status_surf = font_big.render(game.status, True, COL_TEXT)
     surface.blit(status_surf, (16, MARGIN_TOP // 2 - status_surf.get_height() // 2))
 
-    engine_label = "Stockfish" if mode == "stockfish" else "Local two-player"
+    engine_label = {"local": "Local two-player", "search": f"Built-in search (depth {SEARCH_DEPTH})",
+                    "stockfish": "Stockfish"}[mode]
     availability = "" if engine_available or mode != "stockfish" else " (engine unavailable)"
     hint = f"{engine_label}{availability} | M: switch mode | R: restart"
     hint_surf = font_small.render(hint, True, COL_TEXT_SUB)
@@ -675,6 +681,11 @@ def main():
 
     game = ChessGame()
     mode = "local"
+    try:
+        local_engine = SearchEngine(NNUEEvaluator(NNUE_CHECKPOINT) if NNUE_CHECKPOINT else None)
+    except (OSError, RuntimeError, KeyError) as error:
+        local_engine = SearchEngine()
+        print(f"Could not load NNUE checkpoint; using hand evaluation: {error}")
     stockfish = None
     engine_error = None
     stockfish_path = os.environ.get("STOCKFISH_PATH") or shutil.which("stockfish")
@@ -717,6 +728,19 @@ def main():
             game.status = f"Stockfish error: {error}"
         return False
 
+    def play_search_turn():
+        if mode != "search" or game.turn != "b" or game.game_over:
+            return False
+        game.status = "Built-in engine is thinking..."
+        draw_board(screen, game, font, font_small, font_big, piece_images, mode, True)
+        pygame.display.flip()
+        result = local_engine.search(chess.Board(game.to_fen()), max_depth=SEARCH_DEPTH)
+        if result.move and game.apply_uci_move(result.move.uci()):
+            pygame.time.delay(STOCKFISH_MOVE_DELAY_MS)
+            move_sound.play()
+            return True
+        return False
+
     running = True
     while running:
         for event in pygame.event.get():
@@ -728,7 +752,7 @@ def main():
                 if event.key == pygame.K_r:
                     reset_game()
                 elif event.key == pygame.K_m:
-                    mode = "stockfish" if mode == "local" else "local"
+                    mode = {"local": "search", "search": "stockfish", "stockfish": "local"}[mode]
                     reset_game()
             elif event.type == pygame.MOUSEBUTTONDOWN:
                 mx, my = event.pos
@@ -739,7 +763,7 @@ def main():
                     r = (my - layout.y) // square
                     if game.handle_click(r, c):
                         move_sound.play()
-                        play_stockfish_turn()
+                        play_search_turn() or play_stockfish_turn()
 
         draw_board(screen, game, font, font_small, font_big, piece_images, mode, stockfish is not None)
         pygame.display.flip()
