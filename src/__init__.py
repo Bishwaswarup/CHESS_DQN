@@ -1,1 +1,1 @@
-"""Reusable components for the Chess DQN training experiment."""
+"""Search and learned-evaluation components for Retro Pixel Chess."""
