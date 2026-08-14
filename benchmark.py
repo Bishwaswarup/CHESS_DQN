@@ -51,14 +51,62 @@ def main() -> None:
         for skill, sf_depth in LADDER:
             sf.configure({"Skill Level": skill})
             scores = {"win": 0, "draw": 0, "loss": 0}
+
+            print()
+            print("=" * 50)
+            print(f"Stockfish Skill {skill} | Depth {sf_depth}")
+            print("=" * 50)
+            print()
+
             for game in range(args.games):
-                scores[play_game(ours, sf, args.our_depth, sf_depth, game % 2 == 0, args.max_plies)] += 1
+                our_white = game % 2 == 0
+
+                result = play_game(
+                    ours,
+                    sf,
+                    args.our_depth,
+                    sf_depth,
+                    our_white,
+                    args.max_plies
+                )
+
+                scores[result] += 1
+
+                print(
+                    f"Game {game + 1:2d}/{args.games} | "
+                    f"NNUE: {'White' if our_white else 'Black':5s} | "
+                    f"Result: {result.upper():4s} | "
+                    f"Score: {scores['win']}W/"
+                    f"{scores['draw']}D/"
+                    f"{scores['loss']}L",
+                    flush=True
+                )
+
             total = sum(scores.values())
-            row = {"skill": skill, "stockfish_depth": sf_depth, "our_depth": args.our_depth,
-                   **scores, "score_rate": (scores["win"] + 0.5 * scores["draw"]) / total}
+
+            row = {
+                "skill": skill,
+                "stockfish_depth": sf_depth,
+                "our_depth": args.our_depth,
+                **scores,
+                "score_rate": (
+                                      scores["win"] + 0.5 * scores["draw"]
+                              ) / total
+            }
+
             rows.append(row)
-            print(f"skill {skill:2d}, SF depth {sf_depth}: {scores['win']}W/{scores['draw']}D/{scores['loss']}L "
-                  f"({row['score_rate']:.1%})")
+
+            print()
+            print("-" * 50)
+            print(
+                f"FINAL: "
+                f"{scores['win']}W/"
+                f"{scores['draw']}D/"
+                f"{scores['loss']}L | "
+                f"Score: {row['score_rate']:.1%}"
+            )
+            print("-" * 50)
+            print()
     output = Path(args.output)
     output.parent.mkdir(parents=True, exist_ok=True)
     with output.open("w", newline="") as handle:
