@@ -84,6 +84,9 @@ def main() -> None:
     parser.add_argument("--last-output",
                         help="Optional path to also save the final-epoch checkpoint, "
                              "even if it wasn't the best on validation.")
+    parser.add_argument("--resume",
+                         help="Path to a checkpoint to continue training from. "
+                              "Hidden size must match --hidden-size.")
     args = parser.parse_args()
 
     device = torch.device("cuda" if torch.cuda.is_available() else "mps" if torch.backends.mps.is_available() else "cpu")
@@ -106,6 +109,22 @@ def main() -> None:
     loss_fn = torch.nn.SmoothL1Loss()
 
     best_val_loss = float("inf")
+    if args.resume:
+        checkpoint = torch.load(args.resume, map_location=device)
+        if checkpoint["hidden_size"] != args.hidden_size:
+            raise ValueError(f"Checkpoint hidden_size={checkpoint['hidden_size']} does not match "
+                              f"--hidden-size={args.hidden_size}.")
+        model.load_state_dict(checkpoint["state_dict"])
+        # Only trust the checkpoint's val_loss as a starting "best" if it was
+        # evaluated on the same held-out split we're about to use; otherwise
+        # treat this as a fresh comparison so a lucky old split can't block
+        # saving a genuinely better model on this run's split.
+        if checkpoint.get("val_loss") is not None and checkpoint.get("seed") == args.seed \
+                and checkpoint.get("val_fraction") == args.val_fraction:
+            best_val_loss = checkpoint["val_loss"]
+        print(f"Resumed weights from {args.resume} "
+              f"(epoch {checkpoint.get('epoch', '?')}, val Huber {checkpoint.get('val_loss', float('nan')):.2f} cp).")
+
     output = Path(args.output)
     output.parent.mkdir(parents=True, exist_ok=True)
 
@@ -116,7 +135,8 @@ def main() -> None:
         if val_loss < best_val_loss:
             best_val_loss = val_loss
             torch.save({"hidden_size": args.hidden_size, "state_dict": model.state_dict(),
-                        "epoch": epoch, "val_loss": val_loss}, output)
+                        "epoch": epoch, "val_loss": val_loss,
+                        "seed": args.seed, "val_fraction": args.val_fraction}, output)
             flag = "  <- saved (best val so far)"
         print(f"epoch {epoch}/{args.epochs}: train Huber {train_loss:.2f} cp | "
               f"val Huber {val_loss:.2f} cp{flag}")
@@ -125,7 +145,8 @@ def main() -> None:
         last_output = Path(args.last_output)
         last_output.parent.mkdir(parents=True, exist_ok=True)
         torch.save({"hidden_size": args.hidden_size, "state_dict": model.state_dict(),
-                    "epoch": args.epochs, "val_loss": val_loss}, last_output)
+                    "epoch": args.epochs, "val_loss": val_loss,
+                    "seed": args.seed, "val_fraction": args.val_fraction}, last_output)
         print(f"Saved final-epoch checkpoint to {last_output}")
 
     print(f"Best checkpoint: {output} (val Huber {best_val_loss:.2f} cp)")
