@@ -14,6 +14,8 @@ chess/
 │   └── nnue.py             # Sparse learned evaluator
 ├── game.py
 ├── train_nnue.py
+├── prepare_lichess_evals.py
+├── label_with_stockfish.py
 ├── benchmark.py
 ├── requirements.txt
 ├── .gitignore
@@ -55,9 +57,7 @@ strength claims; 12 games is only a smoke-test-sized sample.
 
 `train_nnue.py` trains a small sparse piece-square network by distilling a
 table of FEN positions and centipawn evaluations. Provide CSV columns `fen` and
-`eval` (or JSONL fields with those names); evaluation should be from White's
-perspective. This keeps ingestion explicit, so different Lichess/Stockfish dump
-formats can be converted without silently training on the wrong perspective.
+`eval`; evaluation must be from White's perspective.
 
 ```bash
 python3 train_nnue.py evaluations.csv --epochs 8 --output checkpoints/tiny_nnue.pt
@@ -79,9 +79,20 @@ In Colab, select **Runtime → Change runtime type → T4 GPU**, then run:
 !git clone https://github.com/Bishwaswarup/CHESS_DQN.git
 %cd CHESS_DQN
 !pip install -r requirements.txt
-!sudo apt-get update -qq && sudo apt-get install -y stockfish
+!sudo apt-get update -qq && sudo apt-get install -y stockfish zstd
+# Download just the first 1 GB; Lichess .zst archives support partial decoding.
+!curl -L --range 0-999999999 -o lichess_evals_sample.jsonl.zst https://database.lichess.org/lichess_db_eval.jsonl.zst
+!zstd -dc lichess_evals_sample.jsonl.zst | python3 prepare_lichess_evals.py - evaluations.csv --limit 500000 --min-depth 18
 !python3 train_nnue.py evaluations.csv --epochs 12 --batch-size 1024 --output checkpoints/tiny_nnue.pt
 !python3 benchmark.py --stockfish-path /usr/games/stockfish --nnue-checkpoint checkpoints/tiny_nnue.pt --games 24
 ```
 
 The NNUE trainer automatically selects CUDA in Colab, MPS on supported Macs, and CPU elsewhere. To continue a prior Colab session, store `evaluations.csv` and `checkpoints/` in Google Drive.
+
+You can also make a smaller, domain-specific teacher dataset by sampling a PGN
+file and analysing its positions with Stockfish:
+
+```bash
+python3 label_with_stockfish.py games.pgn --stockfish-path /usr/games/stockfish \
+  --depth 12 --every 4 --limit 100000 --output evaluations.csv
+```
